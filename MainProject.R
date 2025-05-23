@@ -101,3 +101,114 @@ print(cluster_plot)
 hc <- hclust(dist(covid_scaled))
 fviz_dend(hc, k = 4, show_labels = TRUE, label_cols = covid_filtered$Cluster, rect = TRUE, cex = 0.4) + 
   labs(title = "Dendrogram of Countries", x = "Countries", y = "Height (Dissimilarity)")
+
+# Load libraries
+library(readxl)
+
+# Read in grant data (skip first 5 lines of metadata)
+grant_data <- read_csv("COVID19_Grant_Report.csv", skip = 5)
+
+# Clean grant funding and filter for 2020 only
+grant_data_clean <- grant_data %>%
+  mutate(`Award Funding` = parse_number(`Award Funding`)) %>%
+  filter(`Award Fiscal Year` == "2020") %>%
+  group_by(State) %>%
+  summarise(Total_Funding_2020 = sum(`Award Funding`, na.rm = TRUE), .groups = "drop")
+
+# Read population data and clean
+population_data <- read_excel("NST-EST2024-POP.xlsx", skip = 3) %>%
+  select(State = 1, Population_2020 = 3) %>%
+  slice(6:56) %>%
+  mutate(
+    State = str_remove(State, "^\\."),  # remove leading dot
+    Population_2020 = as.numeric(Population_2020)
+  )
+
+# State name to abbreviation mapping
+state_abbrev_map <- c(
+  'Alabama' = 'AL', 'Alaska' = 'AK', 'Arizona' = 'AZ', 'Arkansas' = 'AR',
+  'California' = 'CA', 'Colorado' = 'CO', 'Connecticut' = 'CT', 'Delaware' = 'DE',
+  'Florida' = 'FL', 'Georgia' = 'GA', 'Hawaii' = 'HI', 'Idaho' = 'ID',
+  'Illinois' = 'IL', 'Indiana' = 'IN', 'Iowa' = 'IA', 'Kansas' = 'KS',
+  'Kentucky' = 'KY', 'Louisiana' = 'LA', 'Maine' = 'ME', 'Maryland' = 'MD',
+  'Massachusetts' = 'MA', 'Michigan' = 'MI', 'Minnesota' = 'MN', 'Mississippi' = 'MS',
+  'Missouri' = 'MO', 'Montana' = 'MT', 'Nebraska' = 'NE', 'Nevada' = 'NV',
+  'New Hampshire' = 'NH', 'New Jersey' = 'NJ', 'New Mexico' = 'NM', 'New York' = 'NY',
+  'North Carolina' = 'NC', 'North Dakota' = 'ND', 'Ohio' = 'OH', 'Oklahoma' = 'OK',
+  'Oregon' = 'OR', 'Pennsylvania' = 'PA', 'Rhode Island' = 'RI', 'South Carolina' = 'SC',
+  'South Dakota' = 'SD', 'Tennessee' = 'TN', 'Texas' = 'TX', 'Utah' = 'UT',
+  'Vermont' = 'VT', 'Virginia' = 'VA', 'Washington' = 'WA', 'West Virginia' = 'WV',
+  'Wisconsin' = 'WI', 'Wyoming' = 'WY', 'District of Columbia' = 'DC'
+)
+
+# Add abbreviations for merging
+population_data <- population_data %>%
+  mutate(State_Abbrev = state_abbrev_map[State])
+
+# Merge on state abbreviation
+merged_data <- grant_data_clean %>%
+  inner_join(population_data, by = c("State" = "State_Abbrev")) %>%
+  mutate(Funding_Per_Capita = Total_Funding_2020 / Population_2020)
+
+# Print results
+print(merged_data %>% arrange(desc(Funding_Per_Capita)))
+
+# Plot funding per capita by state
+ggplot(merged_data, aes(x = Funding_Per_Capita, y = reorder(State, Funding_Per_Capita))) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "COVID-19 Funding per Capita by State (2020)",
+    x = "Funding per Capita (USD)",
+    y = "State"
+  ) +
+  theme_minimal()
+
+# Load U.S. COVID case data from NYT
+us_cases_url <- "https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv"
+us_cases <- read_csv(us_cases_url)
+
+# Map NYT state names to abbreviations for joining
+nyt_state_map <- setNames(names(state_abbrev_map), state_abbrev_map)  # reverse map
+
+us_cases_2020 <- us_cases %>%
+  filter(date <= "2020-12-31") %>%
+  group_by(state) %>%
+  filter(date == max(date)) %>%
+  ungroup() %>%
+  mutate(State = state_abbrev_map[state]) %>%
+  filter(!is.na(State)) %>%
+  select(State, Total_Cases_2020 = cases)
+
+# Merge with your existing merged_data
+state_analysis <- merged_data %>%
+  inner_join(us_cases_2020, by = "State") %>%
+  mutate(
+    Cases_Per_Capita = Total_Cases_2020 / Population_2020,
+    Funding_Per_Case = Total_Funding_2020 / Total_Cases_2020
+  )
+
+# Preview the results
+print(state_analysis %>% 
+        select(State, Population_2020, Total_Cases_2020, 
+               Cases_Per_Capita, Funding_Per_Capita, Funding_Per_Case))
+
+# Cases per capita vs funding per capita
+ggplot(state_analysis, aes(x = Cases_Per_Capita, y = Funding_Per_Capita, label = State)) +
+  geom_point(color = "darkred", size = 3) +
+  geom_text(size = 2.5, vjust = -0.8) +
+  labs(
+    title = "Cases per Capita vs. Funding per Capita (2020)",
+    x = "COVID-19 Cases per Capita",
+    y = "Funding per Capita (USD)"
+  ) +
+  theme_minimal()
+
+# Funding per case by state
+ggplot(state_analysis, aes(x = Funding_Per_Case, y = reorder(State, Funding_Per_Case))) +
+  geom_col(fill = "forestgreen") +
+  labs(
+    title = "COVID-19 Funding per Case by State (2020)",
+    x = "Funding per Reported Case (USD)",
+    y = "State"
+  ) +
+  theme_minimal()
